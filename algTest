@@ -1,0 +1,118 @@
+import networkx as nx
+import numpy as np
+from scipy.optimize import minimize, minimize_scalar
+import csv
+import timeit
+import os
+import scipy
+import sys
+import numdifftools as nd
+
+from Git_vs.model import LnamModel
+
+def init(new, n_node = 100, n_net = 2, norm = False, symm = False):
+    if(new == 1):
+        W_list = []
+        for _ in range(n_net):
+            if(symm == 1):
+                G = nx.gnp_random_graph(n_node, 0.05, directed = False)
+                # G = nx.connected_components(G)
+                # print(G)
+                W = np.asarray(nx.to_numpy_matrix(G))
+                np.fill_diagonal(W, 0)
+            else:
+                G = nx.erdos_renyi_graph(n_node, 0.01, directed = True)
+                W = np.asarray(nx.to_numpy_matrix(G))
+                np.fill_diagonal(W, 0)
+            if(norm == 1):
+                row_sums = W.sum(axis=1)
+                for i in range(len(row_sums)):
+                    if(row_sums[i] == 0):
+                        row_sums[i] = 1
+                W = W / row_sums[:, np.newaxis]
+            W_list.append(W)
+
+        n = W[0].shape[0]
+        No_cate_var = 2
+        No_cont_var = 2
+        X1 = np.random.randint(2, size = (n, No_cate_var))
+        X2 = 5 * np.random.random((n, No_cont_var))
+
+        X = np.concatenate((X1, X2), axis = 1)
+
+        Y = 5 * np.random.random((n, ))
+        # Y = np.random.randint(2, size = (n, ))
+
+        X = np.asarray(X, dtype = 'float32')
+        Y = np.asarray(Y, dtype = 'float32')
+        for i in range(len(W)):
+            W[i] = np.asarray(W[i], dtype = 'float32')
+    else:
+        Y_X = []
+        W = []
+        with open('feature.csv', "r") as infile:
+            inreader = csv.reader(infile, dialect = "excel")
+            for record in inreader:
+                Y_X.append(record)
+            infile.close()
+        with open('adj.csv', "r") as infile:
+            inreader = csv.reader(infile, dialect = "excel")
+            for record in inreader:
+                W.append(record)
+            infile.close()
+        Y_X = np.asarray(Y_X, dtype = 'float32')
+        W = np.asarray(W, dtype = 'float32')
+        Y = Y_X[:, 0]
+        X = Y_X[:, 1:]
+    cal_model = LnamModel(X, Y, W_list)
+    rho_init = []
+    for _ in range(len(W_list)):
+        rho_init.append(0)
+    A_init = cal_model.update_A(rho_init)
+    beta_init = cal_model.update_beta(A_init)
+    mu_init = cal_model.update_mu(beta_init, A_init)
+    sigmasq_init = cal_model.update_sigmasq(mu_init)
+    # x0: sigma, rho, beta
+    x0 = [np.sqrt(np.asscalar(sigmasq_init))]
+    x0.extend(rho_init)
+    x0.extend(beta_init)
+    return x0, cal_model
+
+if __name__ == "__main__":
+    # args: file_name, lower, upper, symm, norm
+    # lwr = int(sys.argv[1])
+    # upr = int(sys.argv[2])
+    # symm = int(sys.argv[3])
+    # norm = int(sys.argv[4])
+    lwr = 400
+    upr = 401
+    symm = 1
+    norm = 0
+
+    for i in range(lwr, upr):
+        print("# Node: ", i)
+        x0, cal_model = init(new = 1, n_node = i, n_net = 3, symm = symm, norm = norm)
+        t1 = timeit.default_timer()
+        x = cal_model.indirect_method(x0, disp = False, method = "BFGS")
+        t2 = timeit.default_timer()
+        x2 = cal_model.direct_method()
+        t3 = timeit.default_timer()
+
+        # try:
+        #     s_e = np.sqrt(np.diag(np.linalg.inv(nd.Hessian(loglik)(x, X, Y ,W))))
+        #     s_e_2 = np.sqrt(np.diag(np.linalg.inv(nd.Hessian(loglik)(x2, X, Y ,W))))
+        #
+        #     print(s_e)
+        #     print(s_e_2)
+        # except:
+        #     pass
+
+        print("x")
+        print(x)
+        print(x2)
+        print("loglik")
+        print(cal_model.loglik(x))
+        print(cal_model.loglik(x2))
+        print("time")
+        print(t2 - t1)
+        print(t3 - t2)
